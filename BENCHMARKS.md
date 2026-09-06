@@ -64,6 +64,32 @@ Two of them contain no skill at all. Those are the controls.
 On the warehouse there are no files, so manifest and cache arms collapse into plain state. Only
 transcript, state and plan apply there.
 
+## The paper's rendering, ours, and no skill at all
+
+`state` and `statex` differ in exactly one thing: how Σ is rendered into the prompt. `state`
+uses the driver's own minimal rendering, which is the closest thing in this project to the
+paper's bare A.4 template ("a dict of your state updates, set keys to null to delete").
+`statex` uses this skill's prompt, which additionally prints the full merge algebra and the
+schema's field list every step. That is deviation #2 in `references/paper-findings.md`.
+
+12 tasks × 3 reps, cap 15:
+
+| arm | solved/36 | rejected patches |
+|---|---|---|
+| `rlist`, no skill | 28 | 0 |
+| `react`, no skill | 25 | 0 |
+| `statex`, our rendering | 19 | **2** |
+| `state`, minimal rendering | 19 | **18** |
+
+Our deviation does what it was designed to do and nothing more. Patch rejections drop by a
+factor of nine, and solve rate does not move by a single task: 3 wins, 3 losses, 6 ties at task
+level. So the paper's dominant failure mode on weak models is real and this fixes it, but it
+was never what stood between the skill and the control. The gap to the control is architectural,
+not a formatting artifact.
+
+Worth stating plainly: the other two deviations were never A/B tested. `$append` and the
+`patches.jsonl` journal are in every arm, so nothing here measures them.
+
 ## A: InterCode CTF, 12 tasks × 3 reps, step cap 15 vs 30
 
 | arm | solved/36 @ cap30 | @ cap15 | input tokens @ cap30 |
@@ -312,9 +338,12 @@ captured output. All 7 shards resumed for their missing task ids, no data lost.
 - **No native tool-call support.** The action contract is hardcoded as a shell-command string in
   a domain-agnostic template. `cmd_prompt` already takes `--instructions`, so the same mechanism
   could carry the action contract, defaulting to today's behaviour. Not done.
-- **No loop or stall detection inside the runtime.** Every version of that in this project lived
-  in the benchmark drivers. A runtime-level stall notice is written and unit-tested but only
-  against synthetic journal entries.
+- **Stall detection is now in the runtime, and unmeasured.** Until recently every loop detector
+  in this project lived in the benchmark drivers, so nothing in the skill itself noticed a run
+  going in circles. There is now an advisory stall notice in the step prompt, but it is
+  validated against synthetic journal entries only. No live episode has reacted to it, so its
+  effect on solve rate is unknown. The one loop mechanism that *was* measured, the driver's
+  loop guard, did not help.
 - **The paper's second environment**, a simulated git repo with PRs and CI, was never
   reconstructed.
 

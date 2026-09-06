@@ -38,7 +38,7 @@ more expensive than just keeping the transcript, and buys you nothing.
 ```
 SKILL.md                    the skill itself, what Claude Code / Pi actually loads
 scripts/skillstate.py       the deterministic runtime: schema, merge, validation, journal
-tests/test_skillstate.py    22 unit tests pinning the merge algebra
+tests/test_skillstate.py    27 unit tests pinning the merge algebra and the stall notice
 references/
   paper-findings.md         everything measured in the paper, plus our declared deviations
   schemas/                  ready-made state schemas: CTF, migration, audit, debug-hunt, ...

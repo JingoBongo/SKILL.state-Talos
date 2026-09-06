@@ -33,7 +33,7 @@ Commit `.claude/skills/talos` to the repo if you want the whole team to have it.
 ```bash
 cd ~/.claude/skills/talos   # or wherever you cloned it
 uv run --script scripts/skillstate.py --help
-python3 -m pytest tests/ -q   # 22 tests, should all pass
+python3 -m pytest tests/ -q   # 27 tests, should all pass
 ```
 
 ## Using it

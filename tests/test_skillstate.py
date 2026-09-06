@@ -208,6 +208,50 @@ def test_schema_without_limits_still_accepts_large_values(store):
     assert patch(store, {"cursor": "x" * 10000}).returncode == 0
 
 
+def prompt(store: Path, observation: str = "obs"):
+    return run(["prompt", "--dir", str(store), "--observation", observation])
+
+
+# --- stall notice: advisory only, never blocks anything ---
+
+
+def test_no_notice_on_a_fresh_store(store):
+    res = prompt(store)
+    assert "Notice:" not in res.stdout
+
+
+def test_notice_after_a_streak_of_rejections(store):
+    for _ in range(3):
+        patch(store, {"cursor": 123})  # wrong type, rejected every time
+    res = prompt(store)
+    assert "Notice:" in res.stdout
+    assert "rejected" in res.stdout
+
+
+def test_no_notice_when_rejections_are_not_consecutive(store):
+    patch(store, {"cursor": 123})  # rejected
+    patch(store, {"cursor": "ok"})  # accepted, breaks the streak
+    patch(store, {"cursor": 123})  # rejected
+    res = prompt(store)
+    assert "Notice:" not in res.stdout
+
+
+def test_notice_when_sigma_stops_changing(store):
+    patch(store, {"cursor": "a"})
+    for _ in range(5):
+        patch(store, {"cursor": "a"})  # accepted, but identical - no real change
+    res = prompt(store)
+    assert "Notice:" in res.stdout
+    assert "has not changed" in res.stdout
+
+
+def test_no_notice_when_sigma_keeps_changing(store):
+    for i in range(6):
+        patch(store, {"cursor": str(i)})  # accepted, genuinely different each time
+    res = prompt(store)
+    assert "Notice:" not in res.stdout
+
+
 def test_oversized_field_does_not_sink_a_valid_field_in_the_same_patch(limited):
     """One field over its ceiling must not discard an unrelated valid update
     proposed in the same patch — only that field is dropped."""

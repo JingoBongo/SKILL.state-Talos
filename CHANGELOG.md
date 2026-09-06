@@ -110,10 +110,28 @@ the wrong side of the line it was being used to test. And the warehouse win at T
 the control degrading: its malformed-reply rate climbs to 48.5% at T=200 while the skill's stays
 flat at 7 to 10%.
 
+## Advisory stall notice, 2026-09-06
+
+`feat(runtime): advisory stall notice appended to the step prompt`
+
+Nothing in the runtime ever noticed a run going in circles. Every loop detector in this project
+lived in the benchmark drivers, so in real use only the orchestrating model or a human watching
+would catch one, and the traced failures were exactly that shape: task 96 re-running the same
+grep six times, task 0 re-reading the same file ten times.
+
+Two signals, both read off the journal, no new state carried. Either the last N attempts were
+all rejected, or Σ is byte-identical to what it was N accepted patches ago. Either one appends
+one paragraph to the prompt.
+
+Advisory only. It never blocks, never retries, never decides. A rejection streak or a run of
+no-op steps can be legitimate, so the notice says what it saw and leaves the call to the model.
+27/27 tests, 5 new. Validated against synthetic journal entries only, so its effect on solve
+rate is unmeasured, and the one loop mechanism that was measured (the benchmark driver's loop
+guard) did not help.
+
 ## What's next
 
 - Re-run the matrices against `v3-persistence-fixes`. Nothing else in this list matters as much.
 - Native tool-call support for the action contract, so environments like τ-bench are not
   structurally excluded.
-- A runtime-level stall detector. Written and unit-tested, never validated against a live
-  episode.
+- Measure the stall notice on live episodes rather than synthetic journals.

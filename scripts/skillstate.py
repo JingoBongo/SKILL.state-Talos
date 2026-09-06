@@ -8,7 +8,7 @@
 The model proposes patches; this script owns the schema, the merge and the
 journal. A malformed or off-schema patch is rejected and Sigma is left exactly
 as it was, so a bad generation can never corrupt state. A patch that is valid
-but pushes one field over its byte ceiling drops only that field — the other
+but pushes one field over its byte ceiling drops only that field. The other
 fields in the same patch still apply (see check_limits/cmd_patch).
 
 Merge algebra (the prompt template promises exactly this):
@@ -65,7 +65,7 @@ class Store:
     def require(self) -> None:
         if not self.state_path.exists():
             raise SystemExit(
-                f"no state at {self.root} — run `skillstate.py init --schema <file>` first"
+                f"no state at {self.root}: run `skillstate.py init --schema <file>` first"
             )
 
     @property
@@ -115,6 +115,16 @@ class Store:
                 out.append(entry["patch"])
         return out
 
+    def raw_entries(self) -> list[dict[str, Any]]:
+        """Every journal entry, accepted or rejected, in order."""
+        if not self.journal_path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.journal_path.read_text().splitlines()
+            if line.strip()
+        ]
+
 
 def seed(schema: dict[str, str]) -> dict[str, Any]:
     return {k: DEFAULTS[v] for k, v in schema.items()}
@@ -127,7 +137,7 @@ def validate(patch: Any, schema: dict[str, str]) -> None:
     for key, value in patch.items():
         if key not in schema:
             raise PatchRejected(
-                f"unknown key {key!r} — schema owns {sorted(schema)}. "
+                f"unknown key {key!r}: schema owns {sorted(schema)}. "
                 "Extend the schema deliberately; do not invent fields mid-run."
             )
         if value is None:
@@ -189,6 +199,44 @@ def check_limits(sigma: dict[str, Any], limits: dict[str, int]) -> None:
             )
 
 
+def stall_notice(store: Store, window: int = 5, reject_streak: int = 3) -> str | None:
+    """Advisory only: never blocks anything, never decides for the model.
+
+    Two independent signals, both computed from the journal alone:
+      - the last `reject_streak` attempts were all rejected
+      - Sigma is byte-identical to what it was `window` accepted patches ago
+    Either means the runtime hasn't recorded new information in a while. That
+    can be a real stall (looping, re-deriving the same fact) or a normal
+    stretch of legitimate rejections/no-op steps - the model decides which.
+    """
+    entries = store.raw_entries()
+    if len(entries) >= reject_streak:
+        tail = entries[-reject_streak:]
+        if all(not e.get("accepted") for e in tail):
+            return (
+                f"Notice: the last {reject_streak} patches were all rejected "
+                f"(see `journal -n {reject_streak}` for why). Sigma has not "
+                "gained anything from these attempts - worth checking whether "
+                "the approach itself is wrong before trying again."
+            )
+
+    patches = store.accepted_patches()
+    if len(patches) >= window:
+        schema = store.schema
+        sigma_then = seed(schema)
+        for patch in patches[:-window]:
+            sigma_then = merge(sigma_then, patch)
+        if sigma_then == store.read():
+            return (
+                f"Notice: Sigma has not changed in the last {window} accepted "
+                "patches - each one merged to the same state as before. If "
+                "you are re-deriving something you already found, it may not "
+                "have been committed; if this is expected (e.g. confirming a "
+                "hypothesis), disregard."
+            )
+    return None
+
+
 PROMPT = """Instructions:
 
 {instructions}
@@ -241,7 +289,7 @@ def cmd_init(args, store: Store) -> int:
         if name not in schema:
             raise SystemExit(f"limit set for unknown field {name!r}")
     if store.state_path.exists() and not args.force:
-        raise SystemExit(f"state already exists at {store.root} — pass --force to reset")
+        raise SystemExit(f"state already exists at {store.root}: pass --force to reset")
     store.root.mkdir(parents=True, exist_ok=True)
     store.schema_path.write_text(
         json.dumps({"fields": schema, "limits": limits}, indent=2)
@@ -269,7 +317,7 @@ def cmd_patch(args, store: Store) -> int:
         patch = json.loads(raw)
     except json.JSONDecodeError as exc:
         store.log({"_raw": raw[:2000]}, False, f"malformed JSON: {exc}")
-        print(f"patch rejected — malformed JSON: {exc}", file=sys.stderr)
+        print(f"patch rejected, malformed JSON: {exc}", file=sys.stderr)
         return 2
     if isinstance(patch, dict) and "state_patch" in patch:
         patch = patch["state_patch"]
@@ -277,7 +325,7 @@ def cmd_patch(args, store: Store) -> int:
         validate(patch, store.schema)
     except PatchRejected as exc:
         store.log(patch, False, str(exc))
-        print(f"patch rejected — {exc}", file=sys.stderr)
+        print(f"patch rejected: {exc}", file=sys.stderr)
         return 2
 
     # Byte limits are enforced per top-level field, not on the patch as a
@@ -301,18 +349,18 @@ def cmd_patch(args, store: Store) -> int:
     reason = "; ".join(f"{k}: {v}" for k, v in dropped.items())
     if not applied:
         store.log(patch, False, reason or "empty patch")
-        print(f"patch rejected — {reason or 'empty patch'}", file=sys.stderr)
+        print(f"patch rejected: {reason or 'empty patch'}", file=sys.stderr)
         return 2
 
     try:
         store.write(current)
     except OSError as exc:
         store.log(patch, False, f"write failed: {exc}")
-        print(f"patch rejected — write failed: {exc}", file=sys.stderr)
+        print(f"patch rejected, write failed: {exc}", file=sys.stderr)
         return 3
     store.log(applied, True, reason)
     if dropped:
-        print(f"patch partially applied — dropped {reason}", file=sys.stderr)
+        print(f"patch partially applied, dropped {reason}", file=sys.stderr)
     return cmd_show(args, store)
 
 
@@ -349,14 +397,16 @@ def cmd_prompt(args, store: Store) -> int:
         if args.instructions and Path(args.instructions).exists()
         else (args.instructions or "{skill.instructions}")
     )
-    print(
-        PROMPT.format(
-            instructions=instructions.strip(),
-            sigma=json.dumps(store.read(), separators=(",", ":"), sort_keys=True),
-            observation=args.observation or "(none yet — this is the first step)",
-            fields=", ".join(f"{k} ({v})" for k, v in sorted(schema.items())),
-        )
+    rendered = PROMPT.format(
+        instructions=instructions.strip(),
+        sigma=json.dumps(store.read(), separators=(",", ":"), sort_keys=True),
+        observation=args.observation or "(none yet — this is the first step)",
+        fields=", ".join(f"{k} ({v})" for k, v in sorted(schema.items())),
     )
+    notice = stall_notice(store)
+    if notice:
+        rendered = f"{rendered}\n{notice}"
+    print(rendered)
     return 0
 
 
