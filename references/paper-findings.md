@@ -1,18 +1,18 @@
 # Source findings
 
-SKILL.state: Scalable Long-Horizon Agent Skills — Badhe, Tiwari (Google), Chung (Purdue).
+SKILL.state: Scalable Long-Horizon Agent Skills, by Badhe, Tiwari (Google) and Chung (Purdue).
 arXiv:2608.26263v3, accepted at EMNLP, CC BY 4.0. No code was released; the LaTeX source
 contains no repository link. This skill is an implementation from the paper's Algorithm 1 and
 Appendix A.4, with two deliberate deviations noted at the bottom.
 
 ## The architecture
 
-At step `t` the model receives `(P, Σ_t, O_t)` — procedural spec, execution state, latest
-observation — and emits `(R_t, ΔΣ_t, a_t)`: reasoning, state patch, action. Then
+At step `t` the model receives `(P, Σ_t, O_t)`, the procedural spec, execution state and latest
+observation, and emits `(R_t, ΔΣ_t, a_t)`: reasoning, state patch, action. Then
 `Σ_{t+1} = Σ_t ⊕ ΔΣ_t`, where `⊕` is dictionary merge with null-deletion. `R_t` is discarded
 permanently once the patch validates.
 
-Within-step reasoning stays fully intact — multi-step chain of thought is not curtailed. What
+Within-step reasoning stays fully intact; multi-step chain of thought is not curtailed. What
 is dropped is its *persistence*.
 
 Complexity: conversational runtimes have `|C_t| = O(t)`, so `Σ|C_t| = O(T²)`. Here
@@ -32,16 +32,16 @@ patch triggers rollback-retry; malformed output cannot corrupt `Σ`.
 Models: Gemini-3-Flash, Gemma-4-31B-it, Qwen-3-8B-it. Temperature 0.0, top-p 1.0. Five
 generator seeds per synthetic experiment; differences at T≥50 significant by paired t-test.
 
-## Experiment 1 — long-horizon scaling (warehouse)
+## Experiment 1: long-horizon scaling (warehouse)
 
 | Horizon | SKILL.state | Baseline |
 |---|---|---|
 | T=100 | 65,408 tokens | Stateful 1,062,387 tokens (16.2× more) |
 | T=200 | 0.94 score, 122k tokens | Memory 6.1M tokens (50× more) |
 
-## Experiment 2 — noise robustness (T=50)
+## Experiment 2: noise robustness (T=50)
 
-Distractor events per turn — telemetry, irrelevant git branch activity, rule overrides.
+Distractor events per turn: telemetry, irrelevant git branch activity, rule overrides.
 
 | Noise | Prompt | Memory | Stateful | SKILL.state |
 |---|---|---|---|---|
@@ -51,14 +51,14 @@ Distractor events per turn — telemetry, irrelevant git branch activity, rule o
 
 Distractors are filtered at patch-generation time and never enter a later prompt.
 
-## Experiment 3 — state recovery
+## Experiment 3: state recovery
 
 World state changed outside the agent's action loop. History-based runtimes hallucinated for
 **5–8 consecutive turns** because obsolete facts in the prompt overpowered contradictory new
 observations. SKILL.state recovered in **0 steps**. One scenario (a canceled order) failed for
 every runtime.
 
-## Experiment 4 — public benchmarks (Gemini-3-Flash)
+## Experiment 4: public benchmarks (Gemini-3-Flash)
 
 | Runtime | InterCode CTF pass@1 | tokens | τ-Bench Retail | τ-Bench Airline |
 |---|---|---|---|---|
@@ -75,7 +75,7 @@ On τ-Bench Airline, large database responses pushed baseline prompts above 11,0
 step; state stayed flat near 2,800. Lesson: big tool output is exactly what must be projected
 into state and dropped.
 
-## Experiment 5 — budget-matched controls (T=100, all pinned to ~1,800 tokens)
+## Experiment 5: budget-matched controls (T=100, all pinned to ~1,800 tokens)
 
 | Configuration | Score | Avg prompt | Total tokens |
 |---|---|---|---|
@@ -89,15 +89,15 @@ This is the load-bearing result: the gain is not from shorter prompts. Sliding w
 early allocations; statistical compression strips slot identifiers that look redundant and are
 semantically vital. Structured state preserves the exact relational dependencies both destroy.
 
-## Error taxonomy — weaker models
+## Error taxonomy: weaker models
 
 Gemma-4-31B at T=100 scored 0.42. Failure logs:
 
 | Mode | Share |
 |---|---|
-| Premature state overwrite / deletion — omits existing keys instead of merging in place | 68% |
-| Schema comprehension / type coercion — nested list vs dict confusion | 20% |
-| JSON syntax slips — malformed delimiters, trailing commas | 12% |
+| Premature state overwrite / deletion, omits existing keys instead of merging in place | 68% |
+| Schema comprehension / type coercion, nested list vs dict confusion | 20% |
+| JSON syntax slips, malformed delimiters, trailing commas | 12% |
 
 The authors' reading: small-model degradation comes from structured-output adherence, not
 reasoning capacity. Their proposed fix is grammar-constrained decoding.
@@ -110,7 +110,7 @@ lossless. It fails when:
 1. No fixed schema is known in advance and structure must be discovered during execution
 2. A correct update depends on an earlier observation whose relevance was unrecognized at the
    time, so it was never committed to state
-3. The task objective is defined over the trajectory itself — auditing, debugging provenance,
+3. The task objective is defined over the trajectory itself: auditing, debugging provenance,
    explaining past actions
 
 Single-agent only. Multi-agent extension needs deterministic conflict resolution in `⊕` for
@@ -118,16 +118,16 @@ concurrent writes, which the paper does not exercise.
 
 ## Deviations in this implementation
 
-1. **`{"$append": [...]}`** — the paper's `⊕` replaces lists wholesale, forcing the model to
+1. **`{"$append": [...]}`**. The paper's `⊕` replaces lists wholesale, forcing the model to
    re-emit a growing list to add one item. That is the direct trigger for the 68% failure mode.
    An explicit append op is deterministic, cheaper, and removes the temptation.
-2. **A merge-contract block in the prompt** — the paper's A.4 template states only that
+2. **A merge-contract block in the prompt**. The paper's A.4 template states only that
    `state_patch` is "a dict of your state updates, set keys to null to delete". This
    implementation additionally prints the full merge algebra and the schema's field list on
    every step. Measured consequence: zero rejected patches across 12 haiku CTF episodes, where
    the paper reports 68% premature-overwrite on comparable open-weight models. It costs roughly
    600 characters per step, which is why short episodes are cheaper under an appended
    transcript than under state.
-3. **`patches.jsonl` journal** — the paper discards history entirely and accepts limitation 3.
+3. **`patches.jsonl` journal**. The paper discards history entirely and accepts limitation 3.
    Writing every patch (and every rejection, with its reason) to disk keeps full provenance at
    zero prompt cost, and makes `rollback` a replay rather than a snapshot restore.
