@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "options": "dict",
+    "criteria": "list",
+    "ruled_out": "list",
+    "current_leader": "str",
+    "open_questions": "list"
+  }
+}

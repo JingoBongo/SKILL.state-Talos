@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "cursor": "str",
+    "migrated": "list",
+    "failed": "dict",
+    "rollback_notes": "list",
+    "invariants_verified": "list"
+  }
+}

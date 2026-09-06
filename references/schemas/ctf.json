@@ -1,0 +1,12 @@
+{
+  "fields": {
+    "discovered_flags": "list",
+    "tested_hypotheses": "list",
+    "active_files": "list",
+    "working_dir": "str",
+    "cmd_summary": "list"
+  },
+  "limits": {
+    "cmd_summary": 1500
+  }
+}

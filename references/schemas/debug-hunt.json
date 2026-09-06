@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "symptom": "str",
+    "ruled_out": "list",
+    "evidence": "dict",
+    "current_hypothesis": "str",
+    "next_probe": "str"
+  }
+}

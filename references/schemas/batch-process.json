@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "cursor": "str",
+    "done": "list",
+    "results": "dict",
+    "retry_queue": "list",
+    "counters": "dict"
+  }
+}

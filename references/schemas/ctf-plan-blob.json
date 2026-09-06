@@ -1,0 +1,16 @@
+{
+  "fields": {
+    "discovered_flags": "list",
+    "tested_hypotheses": "list",
+    "active_files": "list",
+    "working_dir": "str",
+    "cmd_summary": "list",
+    "blobs": "dict",
+    "plan": "list"
+  },
+  "limits": {
+    "blobs": 16000,
+    "cmd_summary": 1500,
+    "plan": 1200
+  }
+}

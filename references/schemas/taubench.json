@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "customer": "dict",
+    "facts": "dict",
+    "completed": "list",
+    "next_step": "str"
+  },
+  "limits": { "facts": 8000, "customer": 3000 }
+}

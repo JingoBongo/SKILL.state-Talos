@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "inventory": "dict",
+    "cmd_summary": "str"
+  },
+  "limits": {
+    "inventory": 24000
+  }
+}

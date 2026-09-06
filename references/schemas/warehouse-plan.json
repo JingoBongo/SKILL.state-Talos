@@ -1,0 +1,11 @@
+{
+  "fields": {
+    "inventory": "dict",
+    "cmd_summary": "str",
+    "plan": "list"
+  },
+  "limits": {
+    "inventory": 24000,
+    "plan": 1200
+  }
+}

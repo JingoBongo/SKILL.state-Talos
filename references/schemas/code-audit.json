@@ -1,0 +1,9 @@
+{
+  "fields": {
+    "cursor": "str",
+    "checked": "list",
+    "findings": "dict",
+    "rules_in_force": "list",
+    "open_questions": "list"
+  }
+}
