@@ -61,8 +61,8 @@ Result on the three traced tasks: from 3 of 9 pre-fix episodes solved to 3 of 3,
 third of the steps. One out-of-sample task that had never been solved in three pre-fix attempts
 was solved post-fix; a second stayed unsolved. 22/22 unit tests.
 
-The caveat stated in the commit message stands: these fixes were iterated against the same three
-tasks used to validate them, and the benchmark matrices were never re-run against this version.
+Superseded by the second pass below: the matrices WERE re-run on 2026-09-06. The caveat that
+these fixes were iterated against the same three tasks used to validate them still stands.
 
 Also checked in schemas that existed as working files but had never been committed: `ctf-plan`,
 `ctf-plan-blob`, `taubench`, `taubench-plan`, `warehouse`, `warehouse-plan`.
@@ -101,8 +101,8 @@ reconstruction of the paper's warehouse, and τ-bench retail, on three models. F
 
 Chronologically this came before `v3-persistence-fixes` and motivated it. The matrices measured
 `v1-baseline` and `v2-blob-runtime`. Against those, a plain transcript won on solve rate at
-short horizons while the skill cost 2 to 5 times less; the skill won on the warehouse at T=100;
-and it failed completely on τ-bench, where it also cost more.
+short horizons while the skill cost 2 to 5 times less. The two claims that followed, a warehouse
+win at T=100 and a total failure on τ-bench, were both overturned by the second pass below.
 
 Two results reframed the rest. A crossover measured on the warehouse puts the break-even at
 about 31 steps, and every solved CTF episode took 4 to 6, so the CTF benchmark sits entirely on
@@ -128,6 +128,29 @@ no-op steps can be legitimate, so the notice says what it saw and leaves the cal
 27/27 tests, 5 new. Validated against synthetic journal entries only, so its effect on solve
 rate is unmeasured, and the one loop mechanism that was measured (the benchmark driver's loop
 guard) did not help.
+
+## Second benchmark pass, 2026-09-06
+
+`fix(prompt): show $append owned by a field` and `feat(prompt): make the action contract
+swappable per caller`.
+
+About 1,200 episodes, $6.94, against `v3-persistence-fixes`. Three of the previous pass's
+conclusions turned out to be artefacts of our own harness:
+
+- The warehouse win at T=100 was the control being scored zero on truncated JSON. With one
+  retry the control goes 0.67 to 0.97 and the win disappears.
+- The τ-bench 0/36 measured a driver that bypassed this skill's prompt, because the template
+  hardcoded a shell-string action. With `--action-contract` carrying the tool-call shape:
+  13/36, and final Σ goes from 140 to 4,048 bytes.
+- "Both controls beat every skill variant" on CTF does not survive a paired sign test. The best
+  arm is 6 wins to 10 losses over 79 tasks, p=0.45.
+
+Two real defects were found by running rather than by reading: the bare top-level `$append`
+(rejections 137 to 74 once the prompt named the owning field), and the missing action contract.
+
+One finding worth carrying forward: persistence prompting is domain-sensitive and its sign
+flips. It is worth 13 solved tasks where facts are sparse, and costs about a quarter of the
+score where observations arrive as a stream.
 
 ## What's next
 

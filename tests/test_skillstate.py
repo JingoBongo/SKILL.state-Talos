@@ -267,3 +267,47 @@ def test_partially_applied_patch_is_logged_as_accepted_with_a_reason(limited):
     assert entry["accepted"] is True
     assert "blobs" in entry["reason"]
     assert entry["patch"] == {"notes": "ok"}
+
+
+def test_prompt_no_stall_notice_suppresses_the_notice(tmp_path):
+    """--no-stall-notice must silence an otherwise-firing notice."""
+    run(["init", "--schema", json.dumps(SCHEMA), "--dir", str(tmp_path)])
+    for _ in range(3):  # three rejections in a row is one of the two signals
+        run(["patch", "--dir", str(tmp_path)], stdin=json.dumps({"nope": 1}))
+
+    with_notice = run(["prompt", "--dir", str(tmp_path), "--observation", "x"])
+    without = run(["prompt", "--dir", str(tmp_path), "--observation", "x",
+                   "--no-stall-notice"])
+
+    assert "Notice:" in with_notice.stdout
+    assert "Notice:" not in without.stdout
+    assert without.returncode == 0
+
+
+def test_prompt_shows_append_scoped_to_a_field(tmp_path):
+    """A bare top-level {"$append": [...]} was the dominant rejection cause at scale
+    (137 rejections in 237 episodes). The prompt must show it owned by a field."""
+    run(["init", "--schema", json.dumps(SCHEMA), "--dir", str(tmp_path)])
+    out = run(["prompt", "--dir", str(tmp_path), "--observation", "x"]).stdout
+
+    assert '{"field": {"$append": [...]}}' in out
+    assert "never a patch key on its own" in out
+
+
+def test_action_contract_defaults_to_a_shell_string(tmp_path):
+    """The default must stay byte-identical: every published benchmark used it."""
+    run(["init", "--schema", json.dumps(SCHEMA), "--dir", str(tmp_path)])
+    out = run(["prompt", "--dir", str(tmp_path), "--observation", "x"]).stdout
+    assert '"action": "<string: the exact next step you want executed>"' in out
+
+
+def test_action_contract_is_swappable(tmp_path):
+    """The action shape belongs to the task. A tool-calling caller must be able to
+    say so, or the template contradicts its own system prompt - which is what kept
+    the skill off tau-bench entirely."""
+    run(["init", "--schema", json.dumps(SCHEMA), "--dir", str(tmp_path)])
+    contract = '{"tool": "<name>", "args": {...}} OR {"respond": "<text>"}'
+    out = run(["prompt", "--dir", str(tmp_path), "--observation", "x",
+               "--action-contract", contract]).stdout
+    assert contract in out
+    assert '"<string: the exact next step you want executed>"' not in out

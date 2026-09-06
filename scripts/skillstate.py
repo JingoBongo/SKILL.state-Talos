@@ -251,15 +251,18 @@ Latest Observation: {observation}
 State patch semantics — the runtime applies your patch exactly like this:
   scalar or list value      replaces what is there
   nested object             deep-merges, siblings you omit are kept
-  {{"$append": [...]}}        extends an existing list without resending it
+  {{"field": {{"$append": [...]}}}}  extends that field's list without resending it
   null                      deletes that key
+"$append" is never a patch key on its own. It is always the VALUE of one of the
+fields below, e.g. {{"state_patch": {{"cmd_summary": {{"$append": ["found X at line 12"]}}}}}}.
+A bare {{"$append": [...]}} at the top level is rejected as an unknown field.
 You never need to resend unchanged keys. An off-schema key is rejected and the
 whole patch is discarded, so patch only these fields: {fields}
 
 Nothing outside Sigma survives to the next step — this observation will not be
 shown to you again after this turn. If any detail here might matter later (a
 value, a location, a fact), patch it into a persistent field now (a list via
-{{"$append": [...]}}, or a dict key) rather than relying on memory or a scalar
+{{"<field>": {{"$append": [...]}}}}, or a dict key) rather than relying on memory or a scalar
 field you are about to overwrite. Before choosing your next action: if it
 repeats a command you already ran, or re-reads something you already read, you
 have already lost that result — you had one turn to capture it and did not.
@@ -271,7 +274,7 @@ Provide your response with:
    and your Action, output FIRST so it is never cut off if you run long. The
    JSON block MUST have exactly these two keys:
 {{ "state_patch": {{ <dict: your state updates, set keys to null to delete> }},
-  "action": "<string: the exact next step you want executed>" }}
+  "action": {action_contract} }}
 2. Step-by-step reasoning after the JSON block, if you want it (discarded,
    never read).
 """
@@ -389,6 +392,9 @@ def cmd_rollback(args, store: Store) -> int:
     return 0
 
 
+DEFAULT_ACTION_CONTRACT = '"<string: the exact next step you want executed>"'
+
+
 def cmd_prompt(args, store: Store) -> int:
     store.require()
     schema = store.schema
@@ -397,13 +403,17 @@ def cmd_prompt(args, store: Store) -> int:
         if args.instructions and Path(args.instructions).exists()
         else (args.instructions or "{skill.instructions}")
     )
+    contract = getattr(args, "action_contract", None) or DEFAULT_ACTION_CONTRACT
+    if contract and Path(contract).exists():
+        contract = Path(contract).read_text().strip()
     rendered = PROMPT.format(
+        action_contract=contract,
         instructions=instructions.strip(),
         sigma=json.dumps(store.read(), separators=(",", ":"), sort_keys=True),
         observation=args.observation or "(none yet — this is the first step)",
         fields=", ".join(f"{k} ({v})" for k, v in sorted(schema.items())),
     )
-    notice = stall_notice(store)
+    notice = None if getattr(args, "no_stall_notice", False) else stall_notice(store)
     if notice:
         rendered = f"{rendered}\n{notice}"
     print(rendered)
@@ -449,6 +459,12 @@ def main(argv: list[str] | None = None) -> int:
     p = add("prompt", "emit the step prompt with Sigma injected")
     p.add_argument("--observation", default="")
     p.add_argument("--instructions", default="", help="path to the task spec, or inline")
+    p.add_argument("--no-stall-notice", action="store_true",
+                   help="suppress the advisory stall notice")
+    p.add_argument("--action-contract", default=None,
+                   help="what shape the action takes, as JSON-ish text or a file path. "
+                        "Defaults to a shell-command string. Set it when the caller "
+                        "speaks tool calls rather than shell.")
     p.set_defaults(fn=cmd_prompt)
 
     args = parser.parse_args(argv)

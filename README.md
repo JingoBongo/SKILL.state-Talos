@@ -77,32 +77,33 @@ present since `v1-baseline`:
 
 ## Benchmarks
 
-Roughly 2,300 episodes across InterCode CTF, a reconstruction of the paper's warehouse, and
-τ-bench retail, on three models. Full tables, every dead end, and the discarded runs are in
-`BENCHMARKS.md`.
+Two passes, about 3,500 episodes, across InterCode CTF, a reconstruction of the paper's
+warehouse, and τ-bench retail. Full tables, the dead ends, and the discarded runs are in
+`BENCHMARKS.md`. The second pass overturned three conclusions from the first, so read that file
+rather than trusting any summary of it, including this one.
 
-**The large matrices measured `v1-baseline` and `v2-blob-runtime`, not the version shipped
-here.** They found the skill losing on solve rate to a plain transcript on short-horizon CTF
-work (186/237 against 199/237 at full scale) while costing 2 to 5 times less, winning on the
-warehouse at T=100 (0.76 against 0.67, with a `plan` field in the schema), and failing outright
-on τ-bench retail (0/36, where it also cost *more*: 947 tool calls against 247).
+| benchmark | control | best skill config | reading |
+|---|---|---|---|
+| InterCode CTF, 237 episodes/arm | 199/237 | 192/237 (`hybrid`) | Indistinguishable. Paired sign test over 79 tasks: 6 wins, 11 losses, p=0.33. |
+| Warehouse T=200, 5 seeds | 0.72 | 0.60 (`hybrid`) | Control ahead on score, skill ahead on score per dollar by ~2x. |
+| τ-bench retail, 36 episodes/arm | 27/36 | 13/36 (`state`) | Control ahead. Was reported as 0/36; that measured a driver bypassing the skill. |
 
-Diagnosis found two mechanisms. One is a real defect: a fact observed at step N could not
-survive to step N+1 unless the model chose to commit it, and nothing in the prompt told it to.
-The other is a JSON formatting floor that punishes both arms and gets much worse for the
-transcript at long horizon, which means part of that warehouse win is the control degrading
-rather than the skill improving.
+Three things worth knowing before you use this:
 
-Six fixes were built against those mechanisms. They became `v3-persistence-fixes`, the version
-in this repo. On the three tasks that were traced and diagnosed, the result flipped from 3 of 9
-episodes solved to 3 of 3, at a third of the steps. One out-of-sample task that had never been
-solved in three pre-fix attempts was solved post-fix.
+1. **There is a crossover, and it is measured.** State's prompt grows about 10 characters per
+   step against a transcript's 69, and they cross around T=31 steps. In cost per unit of result
+   the crossover lands between T=100 and T=200. Below it this skill is more expensive than
+   keeping the transcript and buys you nothing.
+2. **The token saving is input-side.** Per solved CTF task the skill uses 14-16k input tokens
+   against a control's 25.7k, but it emits a state patch every step, and output tokens cost
+   about 2.8x input. On a fixed-length job the saving survives into the bill; on a job the agent
+   can finish early it does not.
+3. **Persistence prompting cuts both ways.** The line telling the model to commit an
+   observation before it vanishes moved τ-bench from 0 to 13 solved tasks, and cost the
+   warehouse about a quarter of its score. Sparse precious facts: it wins. A stream of
+   observations: it loses.
 
-**The matrices were never re-run against the fixed version.** The API balance ran out, and
-post-fix testing was 2 to 6 episodes per fix. So: the published losses belong to the pre-fix
-version, the fixes repair the failures that caused them, and nobody has yet measured the fixed
-version at scale. `BENCHMARKS.md` states which number belongs to which version throughout.
-
+## Development history
 ## Development history
 
 `CHANGELOG.md` walks every real commit: the RED-phase test that refused to fail, the A/B that

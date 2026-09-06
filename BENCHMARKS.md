@@ -1,27 +1,23 @@
 # Benchmarks
 
-## Read this first: which version was measured
+## Read this first: two passes, and the second one overturned the first
 
-The large benchmark matrices in this document measured the paper's architecture **as first
-implemented**, tags `v1-baseline` and `v2-blob-runtime`. Every loss reported below belongs to
-that version.
+**Pass 1 (2026-09-03..05)** measured `v1-baseline` and `v2-blob-runtime` and produced most of
+the tables below.
 
-After those runs, a read-only diagnosis pass found two concrete mechanisms behind the losses,
-and six fixes were built and tested against them. Those fixes are what became
-`v3-persistence-fixes`, the version shipped in this repo. On the tasks that were traced and
-diagnosed, they flipped the result:
+**Pass 2 (2026-09-06)** re-ran the same benchmarks against `v3-persistence-fixes` and found
+three of pass 1's conclusions to be artefacts of our own harness, not properties of the
+architecture. Where the two disagree, pass 2 is right and the text says so at the point of
+disagreement.
 
-| traced task | pre-fix (`v2`, 3 reps) | post-fix (`v3`, 1 rep) |
-|---|---|---|
-| 0 | 1/3 solved (5, 30, 30 steps) | solved, 7 steps |
-| 6 | 0/3 solved (30, 30, 30) | solved, 9 steps |
-| 96 | 2/3 solved (16, 23, 30) | solved, 5 steps |
+| pass 1 said | pass 2 measured |
+|---|---|
+| The skill beats the control on the warehouse at T=100, 0.76 vs 0.67 | The control scores 0.97 there once its malformed replies are retried. The win was the control being scored zero on truncated JSON. |
+| A flat state architecture cannot hold a tool-call dialogue: 0/36 on τ-bench | 13/36 once the skill's own prompt is used with a matching action contract. The 0/36 measured a driver that bypassed the skill. |
+| Both controls beat every skill variant on CTF | A paired sign test over 79 tasks cannot distinguish them: best arm 6 wins / 10 losses, p=0.45. |
 
-The matrices were never re-run against `v3`. The OpenRouter balance ran out during the last
-sweep, and post-fix testing was deliberately kept to 2-6 episodes per fix. So: the big numbers
-describe the pre-fix version, the fixes demonstrably repair the failures those numbers were
-caused by, and nobody has yet measured the fixed version at scale.
-Do not cite the tables below as the current skill's score.
+What survives from pass 1: the control is ahead on raw score nearly everywhere, and the token
+advantage is real and grows with horizon.
 
 ## Setup
 
@@ -146,9 +142,11 @@ This is the shape the paper predicts, and the only place we saw it. The transcri
 T=50 and then falls away, 0.97 to 0.67. The plan arm runs nearly flat, 0.80 → 0.79 → 0.76, and
 passes it around T=100. Tokens at T=100: 140k for the transcript against 51k for state, 2.7×.
 
-Two qualifications. It is the **plan field** doing the work, not the architecture alone: plain
-`state` is noisy (0.83 / 0.61 / 0.71) and never clearly beats the control. And the T=100 result
-is partly a control artifact, described under "the format floor" below.
+**This result did not survive pass 2. It was a control artefact, and the retraction is
+measured, not argued.** The control here had no retry on a malformed reply, and an unparseable
+reply scores a hard zero. Re-run with one retry, paired on the same seeds, the control goes
+0.67 to 0.97 at T=100 and its malformed count drops from 96 to 8. The skill did not beat a
+transcript at T=100; a transcript was being scored on truncated JSON. Full pass-2 numbers below.
 
 T=10 discriminates nothing, both arms score 1.00. T=200 was discarded and re-run after 29% of
 calls failed at 55 concurrent drivers.
@@ -202,14 +200,28 @@ wrote almost nothing into state, so every tool result vanished the moment it arr
 same tool got called again. Same failure as CTF task 13, but the lost artifact is a tool result
 rather than a file body.
 
-**Two separate things went wrong here, and they are easy to confuse.** The first τ-bench run was
-our bug, not a result: the driver rendered Σ through the skill's own prompt template, which
-hardcodes `"action"` as a shell-command string, contradicting this benchmark's tool-call
-contract. Every state episode emitted an unusable action. That run was discarded. The table
-above is the corrected run, and it fails for a different reason: nothing gets written into Σ.
+**Everything above is now known to be an artefact.** Three runs happened here, not two.
 
-Both are real findings. The action contract belongs to the task, not to the skill, and that is
-a design flaw in the runtime worth fixing. But it is not why the corrected run scored zero.
+The first was discarded because the driver rendered Σ through the skill's template, whose
+hardcoded shell-string action contradicted the tool-call contract. The fix applied at the time
+was to stop using the skill's template at all and render Σ by hand. The table above is that
+second run. It means **the skill's own prompt was never exercised on this benchmark**: no
+urgency line, no JSON-first ordering, no field-scoped `$append`. The 0/36 measured a
+hand-rolled substitute.
+
+Pass 2 fixed the actual cause instead. `skillstate.py prompt --action-contract` lets the caller
+state the action shape, so the skill's template can be used with tool calls. Same driver, same
+36 episodes:
+
+| rendering of Σ | solved | reward | agent ended it | tool calls | replies to customer | final Σ |
+|---|---|---|---|---|---|---|
+| control, transcript | **27/36** | 0.750 | 27 | 247 | 191 | n/a |
+| hand-rolled body (the table above) | 0/36 | 0.000 | 1 | 949 | 74 | 140 B |
+| **the skill's own template** | **13/36** | **0.361** | 19 | 418 | 264 | **4,048 B** |
+
+The whole behavioural signature inverts. The agent stops hammering tools, starts talking to the
+customer, and writes 29x more into state. The claim that a flat state architecture cannot hold
+a tool-call dialogue is withdrawn: it can, at half the control's rate, and the zero was ours.
 
 ## B: model sweep, 12 tasks, cap 30
 
@@ -233,6 +245,76 @@ passes.
 The skill arm's win/loss pattern is nearly model-independent: tasks 0 and 6 are solved by the
 control on every model and failed by the skill on every model. Structural, not a model-strength
 artifact.
+
+
+## Pass 2, 2026-09-06: v3 measured at scale
+
+About 1,200 episodes, $6.94. Every arm below ran against `v3-persistence-fixes` plus the
+`$append` prompt fix found during this pass.
+
+### CTF, 79 tasks x 3 reps, cap 30, 237 episodes per arm
+
+| arm | solved/237 | steps per solved | input tokens per solved | $ per solved |
+|---|---|---|---|---|
+| control `rlist` | **199** | 6.2 | 25,695 | 0.00318 |
+| v3 `hybrid` | 192 | 8.3 | 16,144 | 0.00316 |
+| v3 `appendfix` | 191 | 10.0 | 13,977 | 0.00338 |
+| v3 `window` | 189 | 11.2 | 13,451 | 0.00370 |
+| v3 `shipped` | 188 | 10.4 | 13,414 | 0.00325 |
+| v2 (pass 1) | 186 | 12.4 | 10,889 | 0.00249 |
+
+A paired sign test over the 79 tasks cannot separate any arm from the control. The skill and
+the control agree on 59-63 tasks; the argument is over 16-20 discordant ones, and the control's
+edge there is within chance: `appendfix` 6 wins / 10 losses p=0.45, `hybrid` 6/11 p=0.33, even
+pass 1's v2 is 5/13 p=0.10. Pass 1's "both controls beat every skill variant" was never a
+supported claim. Point estimates do favour the control in all five arms, so the direction is
+consistent; the sample just cannot resolve a gap this small.
+
+**The dollar advantage is input-side only.** Per solved task the skill uses 14-16k input tokens
+against the control's 25.7k. But it must emit a state patch every step, so its output/input
+ratio is 0.72-1.17 against the control's 0.33, and output costs 2.8x input. Net cost per solved
+task is a wash. The paper's headline token saving is measured on context, not on a bill.
+
+By InterCode tag, the skill is ahead on Reverse Engineering (82-83% vs 78%), level on General
+Skills, and behind on Forensics (70-79% vs 85%) and Cryptography (62% vs 73%). It loses exactly
+where a task needs two observations correlated across steps.
+
+### The `$append` bug, found by running
+
+The dominant rejection at scale was the model emitting a bare top-level `{"$append": [...]}`
+instead of `{"field": {"$append": [...]}}`. The prompt caused it: the semantics block listed the
+op with no owning field. Rejections 137 to 74 with everything else held constant. Solve rate
+189 to 191, inside noise. Pass 1's 3-task validation could not have seen this.
+
+### Warehouse, T=50/100/200, 5 seeds, retry active for every arm
+
+| T | control | `plan` | `hybrid` | $/score control | $/score hybrid |
+|---|---|---|---|---|---|
+| 50 | **0.99** | 0.67 | 0.90 | 0.0090 | 0.0154 |
+| 100 | **0.97** | 0.62 | 0.78 | 0.0371 | 0.0489 |
+| 200 | **0.72** | 0.38 | 0.60 | 0.2171 | **0.1183** |
+
+The control leads on score at every horizon. Cost-adjusted, the crossover is real and sits
+between T=100 and T=200: at T=200 `hybrid` returns roughly twice the score per dollar.
+
+**v3 regressed this benchmark.** Paired on seeds 42-44, the `plan` arm went 0.79 to 0.53 at
+T=50, 0.76 to 0.51 at T=100, 0.48 to 0.46 at T=200. The retry can only add score, so the v3
+changes cost more than it returned. Σ grew 148 to 211, 232 to 316, 429 to 511 bytes, and patch
+rejections appeared where there had been none.
+
+### The finding that ties the three benchmarks together
+
+**Persistence prompting is domain-sensitive, and its sign flips.**
+
+Where facts are sparse and expensive to re-derive, telling the model "commit this now or lose
+it" is worth a great deal: on τ-bench it moved final Σ from 140 to 4,048 bytes and solved tasks
+from 0 to 13. Where observations arrive as a stream, the same instruction makes the model
+commit a firehose into a structure that sits in the prompt at every step, and it costs more
+than it saves: on the warehouse it cost about a quarter of the score.
+
+The same line, opposite signs, depending on whether the domain's observations are rare facts or
+a feed. Nothing in the paper predicts this, and it is the practical rule this project ended up
+with: pick the schema for the domain, and pick the prompting for how the domain emits facts.
 
 ## Why it lost: two failure surfaces
 
