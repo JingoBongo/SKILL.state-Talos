@@ -88,6 +88,11 @@ rather than trusting any summary of it, including this one.
 | Warehouse T=200, 5 seeds | 0.72 | 0.60 (`hybrid`) | Control ahead on score, skill ahead on score per dollar by ~2x. |
 | τ-bench retail, 36 episodes/arm | 27/36 | 13/36 (`state`) | Control ahead. Was reported as 0/36; that measured a driver bypassing the skill. |
 
+Two fixes were attempted for the largest remaining failure modes and both were reverted after
+out-of-sample validation. `BENCHMARKS.md` has the numbers; the short version is that the
+exact-value corruption is real and fixable, and fixing it converts wrong answers into no
+answers, and the `cat` loop is not a memory problem at all.
+
 Three things worth knowing before you use this:
 
 1. **There is a crossover, and it is measured.** State's prompt grows about 10 characters per

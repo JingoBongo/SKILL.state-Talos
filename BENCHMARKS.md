@@ -316,6 +316,81 @@ The same line, opposite signs, depending on whether the domain's observations ar
 a feed. Nothing in the paper predicts this, and it is the practical rule this project ended up
 with: pick the schema for the domain, and pick the prompting for how the domain emits facts.
 
+
+## Third pass, 2026-09-07: two fixes attempted, both dropped
+
+The second pass left the skill statistically level with the control on CTF and behind on the
+other two benchmarks. This pass took the two largest remaining failure modes, built a fix for
+each, and measured both out of sample. Neither survived. Recording them because a negative
+result that cost $1.35 is cheaper than the next person rediscovering it.
+
+### Failure mode 1: the value survives the step boundary, the model corrupts it on the way out
+
+Traced in the episode stores, not inferred. On task 97 Σ held
+`picoCTF{r0tat1on_d3crypt3d_a4b7d759}` correctly and the submitted answer was
+`...c3rypt3d...`. On task 91 the model derived every character right in `cmd_summary`
+(`322=0`, `285=0`) and then wrote `ROUND` instead of `R0UND`. On 82 `9C174346` came back as
+`9c174346`; on 72 the middle of a long hex string vanished.
+
+A transcript never has this failure, because the original text is still sitting there to copy
+from. This is a real and previously unnamed cost of carrying state instead of history.
+
+**The fix:** one prompt rule telling the model to copy exact values out of the state block
+character for character rather than recalling or reconstructing them.
+
+| | on the 8 tasks that showed the failure | on all 79 tasks, 237 episodes |
+|---|---|---|
+| baseline `hybrid` | 10/24 | 192/237, near-miss 15, no answer 18, $0.606 |
+| with the rule | **16/24** | **190/237**, near-miss 11, no answer 25, $0.687 |
+
+It does exactly what it was written to do: near-misses fall 15 to 11. And it buys nothing.
+Solved does not move, episodes ending with no answer at all rise 18 to 25, and spend rises 13%.
+Telling a model not to reconstruct a value it is unsure of trades a wrong answer for no answer.
+Both score zero; only one of them wastes the remaining steps. Reverted.
+
+A longer version of the rule, which also said to compute exact values with a command rather
+than assembling them in reasoning, scored the same 16/24 on the small set but regressed the
+skill's single best task (55: 3/3 to 1/3) and cost an extra step per episode. Dropped earlier.
+
+### Failure mode 2: the `cat` loop, and it is not about memory
+
+25 episodes end with no answer, every one of them at the 30-step cap. Inside them **25% of all
+actions are verbatim repeats**: `cat message.txt` ten times, `cat chall_2.S` nine times.
+
+`SKILL.md` predicts this: a schema holding only a file's *path* turns the run into a `cat` loop.
+The CTF schema stores `active_files` as paths, so that reading is available. It is also wrong.
+The loops happen at steps 2 through 11, and the `hybrid` arm carries the full transcript until
+step 12, so the model had every previous `cat` output in front of it and re-read the file
+anyway. **The content was never missing.** Compare the control on task 82: it read the file
+once and then ran `python3 -c "n=3736234946; r=(3*n)%(2**32); print(hex(r))"`. The skill arm read
+it nine times and computed nothing.
+
+**The fix attempted:** give the schema somewhere to park file contents (`ctf-blob.json`, a
+`blobs` dict with a 16 KB budget), tested both model-filled and runtime-auto-cached, five reps
+on the four clearest loopers, identical skill, schema the only difference.
+
+| | plain `ctf.json` | `ctf-blob.json` |
+|---|---|---|
+| solved | 5/18 | 4/19 |
+| mean steps | 18.8 | 18.6 |
+| task 93 | 2/5 | 1/5 |
+
+Nothing. An early 3/3 on task 93 looked like a win and was noise; five reps put it at 1/5. The
+runtime auto-cache variant filled the field correctly (`message.txt`, 54 bytes) and still
+scored 1/3 at 22 steps, which independently confirms the pass-1 finding that the blob machinery
+is a dead end, and sharpens it: the dead end is the caching, not the absence of a field.
+
+### What this pass establishes
+
+The transcription failure is real, diagnosable, and fixable in the narrow sense that the rule
+removes it. It is not worth fixing, because what it converts into is a different way of scoring
+zero.
+
+The `cat` loop is not a memory failure and not a schema failure. The model has the content and
+does not know what to do with it. Nothing in the state architecture addresses that, and neither
+the loop guard (pass 1, no effect over 126 firings) nor a content field (this pass) changes it.
+It is the largest remaining gap and it is not obviously the skill's problem to solve.
+
 ## Why it lost: two failure surfaces
 
 Mined from the existing results, read-only, no new runs.

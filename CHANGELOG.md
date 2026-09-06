@@ -152,6 +152,25 @@ One finding worth carrying forward: persistence prompting is domain-sensitive an
 flips. It is worth 13 solved tasks where facts are sparse, and costs about a quarter of the
 score where observations arrive as a stream.
 
+## Third pass, 2026-09-07: two attempted fixes, both reverted
+
+`fix(prompt): tell the model to copy exact values out of state` and its revert.
+
+Both of the second pass's remaining failure modes were attacked and neither fix survived
+out-of-sample validation. Full write-up in `BENCHMARKS.md`.
+
+- **Exact-value corruption.** Σ holds the right string and the model retypes it wrong into the
+  action. A prompt rule fixed it on the eight tasks it was built from (10/24 to 16/24) and did
+  nothing on all 79 (192 to 190 solved, near-misses 15 to 11, no-answer episodes 18 to 25,
+  spend +13%). Reverted. The diagnosis is kept; the cure is not.
+- **The `cat` loop.** A content field in the schema, tested model-filled and runtime-cached,
+  five reps: 5/18 against 4/19. No effect. The loops occur while the transcript is still
+  attached, so the content was never missing.
+
+The methodological point is the one worth keeping: the first result came from tasks selected
+because they failed that way, which is exactly the trap `v3-persistence-fixes` was criticised
+for. Predicted, validated, caught before shipping.
+
 ## What's next
 
 - Re-run the matrices against `v3-persistence-fixes`. Nothing else in this list matters as much.
