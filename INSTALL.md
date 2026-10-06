@@ -1,5 +1,10 @@
 # Installing Talos
 
+> Before installing, read the result at the top of `README.md`. Measured against a plain
+> transcript with a control in the same harness, this skill scored the same and cost 3.68x.
+> It is published as a measured negative result. Install it to reproduce or extend the
+> measurement, not to save tokens.
+
 Talos is a [Claude Code](https://claude.com/claude-code) skill: a folder with a `SKILL.md`
 plus a small runtime script. There is no package to publish; you place the folder where Claude
 Code looks for skills.
@@ -28,12 +33,28 @@ git clone <this-repo-url> .claude/skills/talos
 
 Commit `.claude/skills/talos` to the repo if you want the whole team to have it.
 
+## Pi install
+
+[Pi](https://github.com/badlogic/pi-mono) reads skills from `~/.pi/agent/skills/`, and its
+frontmatter names tools differently:
+
+```yaml
+---
+name: talos
+description: <same one-line description as SKILL.md>
+allowed-tools: bash read write edit
+---
+```
+
+Everything below the frontmatter is unchanged. Quote the `description:` value, since it
+contains a colon.
+
 ## Verify it works
 
 ```bash
 cd ~/.claude/skills/talos   # or wherever you cloned it
 uv run --script scripts/skillstate.py --help
-python3 -m pytest tests/ -q   # 27 tests, should all pass
+python3 -m pytest tests/ -q   # 97 tests, should all pass
 ```
 
 ## Using it
