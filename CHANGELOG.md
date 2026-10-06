@@ -3,6 +3,29 @@
 Talos's own git history. This repo was extracted from a live skill repo with tags for the three
 checkpoints below. Every entry is a real commit; dates and messages come from `git log`.
 
+## unreleased, 2026-10-06
+
+Not promoted to the published skill. Measured on warehouse only, one seed at T=25
+plus a run at T=100 in progress.
+
+- `ids` subcommand: the `obs_ref` and `state_hash` a patch must echo, from the
+  runtime. Both harnesses had their own copy of the formula and both drifted when
+  the counter changed meaning, after which every patch was rejected.
+- A bare `{"$append": x}` appends one element instead of being rejected. 116 of
+  the 124 rejections measured on a long horizon were exactly that shape, and each
+  one cost a correction re-prompt.
+- `init --no-state-hash`: no hash line in the prompt, no hash in the wrapper.
+  For a single-writer loop, where `obs_ref` already covers staleness. Measured
+  13% less output at T=25.
+- `prompt --brief-after N`: the merge contract is taught in full for N accepted
+  steps and then compressed to one line. The rendered prompt drops 48%, from 2520
+  bytes to 1333.
+
+The reason all four are about cost: the benchmark's price table said output cost
+2x input, and the provider's own figure says roughly 25x. State's whole saving is
+on the input side, which turns out to be 2 to 5% of the bill. See the bench repo's
+`docs/COST-MODEL.md`.
+
 ## v1-baseline, 2026-09-05
 
 `feat(skill): state-over-history baseline from arXiv:2608.26263`

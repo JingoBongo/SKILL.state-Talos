@@ -1,6 +1,23 @@
 # Benchmarks
 
-## Read this first: two passes, and the second one overturned the first
+## Read this first: the fourth pass settled it, and the answer is no
+
+**Pass 4 (2026-10-06)** ran the warehouse at T=100 with the control in the same harness, which
+no earlier pass did. Three seeds, three context strategies, nine episodes, no errors, no
+rejected patches.
+
+All three arms scored **identically on every seed**. The state arms cost 3.68x and 4.11x.
+
+That run, plus the price correction that came with it, overturns the cost case this file spent
+three passes building. The section "Pass 4" below has the numbers. Everything before it is kept
+because it is where the numbers came from, but where it disagrees with pass 4, pass 4 is right.
+
+The short version of why: **the architecture optimises input tokens, and input is about 5% of
+the bill.** Output costs 15 to 25 times input on this model, 99% of an episode's tokens are
+output, and the state arm produces three times as much of it, because a prompt that re-opens
+the merge contract every step gives the model three times as much to deliberate about.
+
+## Read this next: two passes, and the second one overturned the first
 
 **Pass 1 (2026-09-03..05)** measured `v1-baseline` and `v2-blob-runtime` and produced most of
 the tables below.
@@ -18,6 +35,100 @@ disagreement.
 
 What survives from pass 1: the control is ahead on raw score nearly everywhere, and the token
 advantage is real and grows with horizon.
+
+## Pass 4, 2026-10-06: the warehouse at T=100 with a control in the same harness
+
+Every earlier warehouse comparison either ran the control in a different harness or quoted one
+across harnesses. This did neither. Run tag `T100-2026-10-06`.
+
+| arm | n | score | input | output | out/step | reasoning | cost $ | $/point | malformed |
+|-----|---|-------|-------|--------|----------|-----------|--------|---------|-----------|
+| react | 3 | 0.657 | 140479 | 152745 | 1527 | 99.3% | **0.0486** | **0.0739** | 1.3 |
+| statex | 3 | 0.657 | 161586 | 468599 | 4686 | 91.2% | 0.1789 | 0.2724 | 1.3 |
+| lean-nh | 3 | 0.657 | 139558 | 509065 | 5091 | 82.2% | 0.1994 | 0.3037 | 5.0 |
+
+Paired by seed:
+
+| seed | react | statex | lean-nh |
+|------|-------|--------|---------|
+| 42 | 0.62 | 0.62 | 0.62 |
+| 43 | 0.64 | 0.64 | 0.64 |
+| 44 | 0.71 | 0.71 | 0.71 |
+
+Identical to two decimals in every cell. There is no quality difference here to trade cost
+against.
+
+The benchmark still discriminates: always-Wait scores 0.00, an agent that answers only from the
+visible observation scores 0.34 to 0.39, the oracle scores 1.00. All three arms sit well above
+the memoryless floor. They use memory. They do not differ in how well.
+
+### The price table was wrong, and that is what the old cost case rested on
+
+`config.toml` priced the model at $0.14 in / $0.28 out per 1M, so output looked like 2x input.
+The provider's own per-call figure says output is 15 to 25x input. There is also no single
+price: OpenRouter serves one model id through several upstream providers and picks per request.
+Two calls with the same token counts were billed $0.000047 and $0.000400, an 8.5x spread.
+Episode totals average over 100 calls and are stable to within 3%, so episode comparisons hold;
+per-call ones do not.
+
+Every cost figure in the passes above was computed from that table. The ones that depended on
+the input/output ratio, which is all of them, are wrong.
+
+### The input saving does not exist at T=100
+
+The transcript arm averages 1405 input tokens per step. The flat state prompt is about 1616.
+**The state arm's input is 15% larger than the control's.**
+
+The flat prompt is not small: the merge contract, the response format and the task spec come to
+3458 bytes before Sigma is added. And bytes are not tokens. Prose tokenizes at roughly 4 bytes
+per token; the JSON that stays (`item_77`, `shelf_391`) at roughly 1.7. The 4x saving reported
+in earlier passes was measured in prompt bytes per step. In tokens per episode it is negative.
+
+### Crossing the crossover does not rescue it
+
+Transcript input grows quadratically in T and state input linearly, so state does win the input
+column, near T=130 on this task.
+
+| | T=200 | T=400 |
+|---|---|---|
+| input the state arm saves | 238,745 tokens | 1,601,325 tokens |
+| output the state arm adds | 631,708 tokens | 1,263,416 tokens |
+| net, cheapest route observed | **+$0.199** | **+$0.385** |
+| net, dearest route observed | **+$0.330** | **+$0.636** |
+
+The input column is won and the episode still costs more. The gap widens with T.
+
+### Where the output actually goes
+
+99.3% of the control's output tokens are reasoning. The state arms are not writing longer
+patches, they are deliberating more: 4686 and 5091 tokens per step against 1527, at
+`reasoning_effort=low`, with zero rejected patches to re-think. The prompt is the thing being
+deliberated about.
+
+### Fixes tried in this pass
+
+| change | effect |
+|---|---|
+| `ids` subcommand | Fixed a drift bug that rejected every patch in the newer harness |
+| scalar `$append` accepted | Removed 94% of every rejection ever recorded on a long horizon (116 of 124) |
+| `--no-state-hash` | 13% less output at T=25; indistinguishable at T=100 |
+| `--brief-after N` | **Failed.** Input down 24%, output up 9%, cost up 11%, malformed replies up from 1.3 to 5.0 |
+| `$append` example built from the schema | The hardcoded example named `cmd_summary`, a `str` in the warehouse schema, so the prompt demonstrated the one patch the runtime rejects. Models copied it. Fixed after the run, so not in these numbers |
+
+`--brief-after` was built specifically to test whether the contract block was what the model
+kept re-reasoning about. It compressed the prompt 34% in bytes and 6% in tokens, and the model
+produced more output rather than less, while holding the response format less firmly.
+
+### What pass 4 does not establish
+
+One task, one model (deepseek-v4-flash-0731 at `reasoning_effort=low`), three seeds, one
+horizon. Zero disagreeing pairs, so no sign test applies at all. The build measured still
+carried the broken `$append` example, which cost `statex` some corrections; fixing it narrows
+the gap and does not close a 3.68x one.
+
+The two largest findings, that output dominates the bill and that the state prompt triples
+deliberation, are properties of the model and the price sheet rather than of the warehouse. They
+have not been checked on another model.
 
 ## Setup
 
@@ -506,17 +617,33 @@ captured output. All 7 shards resumed for their missing task ids, no data lost.
 
 ## Verdict
 
-Against the pre-fix version, the transcript wins on solve rate almost everywhere, and the skill
-costs 2-5× less except on τ-bench, where it costs more. The one clean win is the warehouse at
-T=100, and part of that is the control degrading rather than the skill improving.
+**The skill does not pay for itself.** On the one benchmark run with a control in the same
+harness, it scored identically to a plain transcript on every seed and cost 3.68x. The variant
+built to fix that cost 4.11x.
 
-The measured explanation is not that state is a bad idea. It is that state was being tested
-mostly below its own crossover point of about 31 steps, and that it had a real defect above it:
-a fact observed at one step could not survive to the next unless the model chose to commit it,
-and nothing in the prompt told the model that. Fixing that defect flipped every traced failure,
-including one out-of-sample task that had never been solved in three attempts.
+The architectural claim is true and reproduces cleanly: a state prompt does not grow with the
+horizon, 505 bytes per step at T=25 against 567 at T=200, where a transcript goes from 565 to
+2271. It is worth about 5% of the bill, because input is about 5% of the bill.
 
-What nobody has yet is the fixed version measured at matrix scale. Until that exists, the
-boundary written into `SKILL.md` under "When to keep the transcript instead" is the operational
-summary: long horizons where the past is genuinely unrecoverable, and not short ones where
-re-reading a file is cheap.
+The mechanism that costs money is deliberation per step, and this architecture increases it.
+Every step hands the model a merge contract, a field allowlist, an echo requirement and a
+four-key response format, and the model reasons about all of it before answering. Three times
+the output tokens, for the same answers.
+
+Three passes of this file argued that the skill lost on score but won on cost. The cost half
+was computed from a price table that had the input/output ratio wrong by an order of magnitude.
+With the provider's own figures it loses on both.
+
+What would change this conclusion, in the order worth trying:
+
+- **A model where reasoning is not the bill.** Everything here rests on 99% of output being
+  reasoning tokens. On a non-reasoning model the arithmetic is different and untested.
+- **A task whose state genuinely cannot be carried in a transcript.** The warehouse can be. A
+  job where the relevant fact is thousands of steps back, or where the transcript would exceed
+  the context window outright, is the case this architecture was described for and the case
+  nothing here has measured.
+- **A prompt that does not re-teach itself.** `--brief-after` was the obvious attempt and it
+  failed. Something that removes the contract from the step prompt entirely, rather than
+  compressing it, has not been tried.
+
+Until one of those exists, keep the transcript.

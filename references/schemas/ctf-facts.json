@@ -1,0 +1,17 @@
+{
+  "fields": {
+    "discovered_flags": "list",
+    "tested_hypotheses": "list",
+    "files": "dict",
+    "working_dir": "str",
+    "next_step": "str"
+  },
+  "limits": {
+    "files": 3000,
+    "tested_hypotheses": 1200,
+    "next_step": 400
+  },
+  "key_discipline": [
+    "files"
+  ]
+}

@@ -18,20 +18,29 @@ Talos carries state, not history. At every step the model sees only the task spe
 state, and the latest observation. It emits a patch to that state, and its reasoning is thrown
 away for good.
 
+> **Measured result, 2026-10-06: it does not pay for itself.** On the warehouse at T=100 with
+> the control in the same harness, three context strategies scored identically on every seed and
+> the state arms cost 3.68x and 4.11x. The architecture saves input tokens, and input is about
+> 5% of the bill on a reasoning model. Read `BENCHMARKS.md` before adopting this. It is kept
+> public as a complete, measured negative result, not as a recommendation.
+
 ## Is this for you?
 
 Read `SKILL.md`'s own "When this applies" and "When to keep the transcript instead" sections
 first. They are the real answer, and they are now backed by measurement rather than theory.
 
-Short version: long, sequential, single-agent jobs where an old fact stops being retrievable
-once the step that produced it has passed. Audits, migrations, long debug hunts, batch and
-backfill work. Not a fit for short jobs where re-reading a file is cheap, for work whose schema
-you cannot name yet, or for anything driven by real tool-call APIs rather than a
-shell-command-shaped action.
+**Probably not.** On everything measured so far, a plain transcript is as good and cheaper.
 
-There is a measured threshold for "long". State's prompt grows about 10 characters per step
-against a transcript's 69, and they cross at **T ≈ 31 steps**. Below thirty steps this skill is
-more expensive than just keeping the transcript, and buys you nothing.
+The one case this architecture was described for and nothing here has tested: a job where the
+transcript would overflow the context window outright, or where the fact you need is thousands
+of steps back. If you are there, the alternative is not "keep the transcript", it is "lose the
+fact", and that is a different comparison from any run in this repo.
+
+Everywhere else, including long, sequential, single-agent jobs of 100 to 200 steps, keep the
+transcript. The threshold this README used to quote (**T ≈ 31 steps**) is the point where the
+state prompt becomes smaller than the transcript. It is real, and it is not a cost crossover:
+state wins the input column near T=130 and is still $0.39 to $0.64 per episode behind at T=400,
+because it produces three times the output and output costs 15 to 25 times input.
 
 ## Repo layout
 
@@ -77,44 +86,58 @@ present since `v1-baseline`:
 
 ## Benchmarks
 
-Two passes, about 3,500 episodes, across InterCode CTF, a reconstruction of the paper's
-warehouse, and τ-bench retail. Full tables, the dead ends, and the discarded runs are in
-`BENCHMARKS.md`. The second pass overturned three conclusions from the first, so read that file
-rather than trusting any summary of it, including this one.
+Four passes, roughly 7,000 episodes, across InterCode CTF, a reconstruction of the paper's
+warehouse, and τ-bench retail. Full tables, the dead ends, the retractions and the discarded
+runs are in `BENCHMARKS.md`. Each pass overturned something from the one before, so read that
+file rather than trusting any summary of it, including this one.
+
+**Pass 4 is the one that matters**, because it is the only warehouse comparison whose control
+ran in the same harness. T=100, three seeds:
+
+| arm | score | cost $ | $/point |
+|-----|-------|--------|---------|
+| react (transcript) | 0.657 | **0.0486** | **0.0739** |
+| statex (skill) | 0.657 | 0.1789 | 0.2724 |
+| lean-nh (skill, compressed prompt) | 0.657 | 0.1994 | 0.3037 |
+
+Identical score on every individual seed: 0.62, 0.64, 0.71 across all three arms. The benchmark
+is not degenerate; always-Wait scores 0.00 and the oracle 1.00, and all three arms sit well
+above a memoryless agent's 0.34 to 0.39.
+
+Earlier passes, which still stand on score:
 
 | benchmark | control | best skill config | reading |
 |---|---|---|---|
 | InterCode CTF, 237 episodes/arm | 199/237 | 192/237 (`hybrid`) | Indistinguishable. Paired sign test over 79 tasks: 6 wins, 11 losses, p=0.33. |
-| Warehouse T=200, 5 seeds | 0.72 | 0.60 (`hybrid`) | Control ahead on score, skill ahead on score per dollar by ~2x. |
 | τ-bench retail, 36 episodes/arm | 27/36 | 13/36 (`state`) | Control ahead. Was reported as 0/36; that measured a driver bypassing the skill. |
 
-Two fixes were attempted for the largest remaining failure modes and both were reverted after
-out-of-sample validation. `BENCHMARKS.md` has the numbers; the short version is that the
-exact-value corruption is real and fixable, and fixing it converts wrong answers into no
-answers, and the `cat` loop is not a memory problem at all.
+Three things worth knowing:
 
-Three things worth knowing before you use this:
+1. **The cost case was arithmetic error.** Passes 1 to 3 reported the skill as 2 to 5x cheaper.
+   That came from a price table saying output costs 2x input. It costs 15 to 25x. With the
+   provider's own per-call figures the skill loses on cost as well as score.
+2. **The input saving is real and small.** The state prompt genuinely does not grow with the
+   horizon. Input is about 5% of the bill on a reasoning model, where 99% of the tokens are
+   output and nearly all of that is reasoning.
+3. **The skill triples deliberation.** 4686 output tokens per step against a transcript's 1527,
+   at `reasoning_effort=low`, with zero rejected patches. Handing the model a merge contract, a
+   field allowlist, an echo requirement and a four-key response format on every step gives it
+   that much more to think about before it answers.
 
-1. **There is a crossover, and it is measured.** State's prompt grows about 10 characters per
-   step against a transcript's 69, and they cross around T=31 steps. In cost per unit of result
-   the crossover lands between T=100 and T=200. Below it this skill is more expensive than
-   keeping the transcript and buys you nothing.
-2. **The token saving is input-side.** Per solved CTF task the skill uses 14-16k input tokens
-   against a control's 25.7k, but it emits a state patch every step, and output tokens cost
-   about 2.8x input. On a fixed-length job the saving survives into the bill; on a job the agent
-   can finish early it does not.
-3. **Persistence prompting cuts both ways.** The line telling the model to commit an
-   observation before it vanishes moved τ-bench from 0 to 13 solved tasks, and cost the
-   warehouse about a quarter of its score. Sparse precious facts: it wins. A stream of
-   observations: it loses.
+A fourth thing, for anyone building something similar: compressing the prompt was tried
+(`--brief-after`) and made it worse. Input fell 24%, output rose 9%, cost rose 11%, and
+malformed replies went from 1.3 to 5.0 per episode.
 
-## Development history
 ## Development history
 
 `CHANGELOG.md` walks every real commit: the RED-phase test that refused to fail, the A/B that
 looked like a regression but turned out to measure agent compliance rather than the runtime,
 the blob-cache machinery that a higher step cap made redundant, the mutation that broke a
 reliable task, and the eventual rename to Talos.
+
+The measurement history, including which published claims were later retracted and why, is in
+`BENCHMARKS.md`. The harness, every episode record and the cost analysis live in the bench
+repo alongside this skill.
 
 ## License
 

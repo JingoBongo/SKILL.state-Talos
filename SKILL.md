@@ -26,7 +26,32 @@ reasoning is thrown away. State is the only thing that crosses a step boundary.
 **The state is a sufficient statistic for the rest of the job.** If a fact matters later, it
 goes into state the moment it is known. If it is not in state, it does not exist.
 
+> ## Measured result: on everything tested, a plain transcript wins
+>
+> Warehouse at T=100, three seeds, control in the same harness: this skill and a transcript
+> scored **identically on every seed**, and the skill cost **3.68x**. On InterCode CTF at full
+> scale the two are statistically indistinguishable. On τ-bench the transcript leads 27/36 to
+> 13/36.
+>
+> The reason is not that the architecture fails to do what it says. The state prompt genuinely
+> does not grow with the horizon. But input is about 5% of the bill on a reasoning model, where
+> 99% of the tokens are output and nearly all of that is reasoning, and handing the model a
+> merge contract plus a four-key response format on every step **triples how much it
+> deliberates**: 4686 output tokens per step against a transcript's 1527.
+>
+> Earlier versions of this file claimed a 2 to 5x cost saving. That came from a price table
+> with the input/output ratio wrong by an order of magnitude. See `BENCHMARKS.md`.
+>
+> **Do not reach for this skill to save tokens.** The only case it was described for and that
+> nothing here has measured is a job where the transcript would overflow the context window
+> outright, or where the fact you need is thousands of steps back. There the alternative is not
+> a cheaper transcript, it is losing the fact.
+
 ## When this applies
+
+Read the box above first. Measured against a transcript, none of the cases below came out
+ahead. They are the shapes the architecture was designed for, not shapes where it has been
+shown to win.
 
 - Work spanning many items: audits, migrations, backfills, batch edits, sweeps over files
 - Long investigations: debugging, root-cause hunts, CTF, bisecting, log forensics
@@ -37,7 +62,9 @@ goes into state the moment it is known. If it is not in state, it does not exist
 
 ## When to keep the transcript instead
 
-Three cases, from the paper's own limitations. In these, history *is* the work:
+**By default.** Measured, a transcript matches this skill on quality and costs a third to a
+quarter as much on every benchmark here. The cases below are the ones where state fails
+outright rather than merely losing on cost.
 
 | Situation | Why state fails |
 |---|---|
@@ -59,15 +86,30 @@ uv run --script "$S" init --schema "${CLAUDE_SKILL_DIR}/references/schemas/code-
 
 # each step
 uv run --script "$S" prompt --instructions TASK.md --observation "<what just happened>"
+#   -> the prompt shows the current state, a `state_hash: <hex>` line, and
+#      `Latest Observation (obs#N): ...`
 #   -> hand that text to a subagent, verbatim
-#   -> it returns {"state_patch": {...}, "action": "..."}
+#   -> it returns {"state_patch": {...}, "action": "...", "obs_ref": "obs#N", "state_hash": "<hex>"}
 echo '<that json>' | uv run --script "$S" patch     # validates, merges, logs, prints new state
 ```
 
-`patch` accepts either the bare patch or the whole `{"state_patch":…,"action":…}` object.
-A rejected patch exits non-zero, prints why, and **leaves state exactly as it was**. The
-schema and the merge live in the script, so a bad generation cannot corrupt anything. Fix the
-patch and re-send; that is the whole retry protocol.
+`patch` requires the full wrapper, which has exactly four keys:
+`{"state_patch": …, "action": …, "obs_ref": …, "state_hash": …}`. The model echoes `obs_ref`
+(e.g. `obs#7`) and `state_hash` (eight hex characters) verbatim from the prompt. A bare patch
+with no wrapper is rejected for the missing fields; `action` is carried for the caller and the
+runtime does not read it.
+
+`obs_ref` names the **step**, not the render and not the text of the observation. It advances
+when a patch is accepted, so rendering the prompt again (to log it, to retry a transport
+error, to look at it) leaves the id the model echoed valid. A rejected patch does not advance
+it, which is what lets the correction loop re-ask about the same step. A rejected patch exits non-zero, prints why, and
+**leaves state exactly as it was**. Schema, type and limit errors are reported before
+staleness: a patch can be both stale and malformed, and the malformed half is the half you can
+act on. The schema and the merge live
+in the script, so a bad generation cannot corrupt anything. Fix the patch and re-send; that
+is the whole retry protocol. If the runtime rejects a patch as stale (obs_ref or state_hash
+mismatch), the prompt is the authoritative source: re-derive the patch from it, and the runtime
+re-prompts with the exact error (a correction), up to 2 times.
 
 Each step produces three things and nothing else: the patch, the action, and the observation
 you feed to the next step. The subagent's reasoning is not summarized, not appended, not kept.
@@ -81,10 +123,32 @@ you feed to the next step. The subagent's reasoning is not summarized, not appen
 | `show --pretty` | current state for a human |
 | `prompt --instructions F --observation S` | the full step prompt, state injected |
 | `patch` (stdin) | validate + merge + journal one patch |
+| `ids` | the `obs_ref` and `state_hash` a patch must echo right now |
 | `journal [-n N]` | every patch including rejections and their reasons |
 | `rollback --to N` | replay the journal to step N |
 
 Run any of them with `--help` for flags.
+
+Ask `ids` for the echo values rather than deriving them. Two harnesses here
+recomputed the pair themselves and both drifted from the runtime the moment the
+counter changed meaning, after which every patch was rejected.
+
+Three flags matter on a long episode, where a per-step cost is paid hundreds of
+times:
+
+| Flag | On | Effect |
+|---|---|---|
+| `--no-state-hash` | `init` | drop the hash echo; the wrapper is three keys, not four |
+| `--brief-after N` | `prompt` | teach the merge contract for N steps, then compress it to one line |
+| `--no-stall-notice` | `prompt` | suppress the advisory stall notice |
+
+`--no-state-hash` is for a single-writer loop, which is what an agent usually
+is. The hash guards against a world that moved under the model between read and
+write; if nothing else writes to the store, `obs_ref` already covers staleness
+and the echo is paid for nothing. Measured at T=25: 13% less output.
+
+`--brief-after` exists because the contract block is roughly half the prompt and
+the model has read it N times by then. Measured: the rendered prompt drops 48%.
 
 ## Merge algebra
 
@@ -96,11 +160,17 @@ the model is never guessing:
 | scalar or list | replaces what is there |
 | nested object | deep-merges; siblings you omit are **kept** |
 | `{"$append": [...]}` | extends an existing list without resending it |
+| `{"$append": x}` | a bare value appends one element; the brackets are optional |
 | `null` | deletes that key |
 | key not in schema | whole patch rejected, state untouched |
 
 `$append` exists because the dominant failure on weaker models is dropping existing keys while
 rewriting a field. Never make the model re-emit a growing list to add one item.
+
+The bare form is accepted because 94% of every patch rejection measured on a long
+horizon was a model writing `{"$append": "one note"}` without the brackets. The
+intent is not ambiguous and a correction round-trip costs more than the brackets
+are worth. The prompt still teaches the list form.
 
 ## Choosing a schema
 
@@ -188,3 +258,28 @@ turns; state-based recovered in 0, because the decision reads current state and 
 observation lands in it immediately.
 
 Full findings and numbers: `references/paper-findings.md`.
+
+## Transcript policy: starting as a transcript and converting
+
+Below about **31 steps** this architecture costs more than simply keeping the transcript, and
+buys nothing. That crossover is measured, not assumed: state's prompt grows around 10
+characters per step against a transcript's 69.
+
+So on a job that may be short, do not choose up front. Pass `--hybrid-k K` to `prompt` and the
+runtime announces which side of the crossover the episode is on:
+
+```
+transcript_policy: keep  (step 4 of K=31)
+transcript_policy: drop  (step 31 of K=31)
+```
+
+While the policy is `keep`, hold your prior observations in context as well as the state;
+state accumulates in parallel, so nothing is lost when it takes over. At `drop`, let them go.
+
+This is the best-measured configuration in the project: on 237 InterCode CTF episodes it solved
+192 against a transcript control's 199 and the plain state arm's 186, in 6.7 steps against 9.7,
+hitting the step cap 18 times against 38. On the warehouse at T=200 it returned roughly twice
+the score per dollar of the control. The runtime owns the policy because it is the only part
+that knows the step number; the transcript itself stays with the caller, where it belongs.
+
+`--hybrid-k 0`, the default, announces nothing and changes nothing.
